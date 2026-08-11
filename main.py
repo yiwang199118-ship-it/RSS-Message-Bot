@@ -4,8 +4,20 @@ import json
 import os
 
 WEBHOOK_URL = os.getenv("WECHAT_WEBHOOK")
-FEED_URL = "https://openai.com/blog/rss.xml"  # 示例openai文章
-HISTORY_FILE = "pushed_links.txt"  # 存储已推送文章的链接
+
+# ========== 多源 RSS 配置 ==========
+# 格式：{"来源名称": "RSS地址"}，可随意增删
+RSS_FEEDS = {
+    "运维派": "https://www.yunweipai.com/feed",
+    "InfoQ中文": "https://www.infoq.cn/feed",
+    "开源中国": "https://www.oschina.net/news/rss",
+    "DevOps.com": "https://devops.com/feed/",
+    "阿里云公告": "https://www.aliyun.com/rss/notice/zh.xml",
+    "OpenAI博客": "https://openai.com/blog/rss.xml"
+}
+
+HISTORY_FILE = "pushed_links.txt"  # 已推送链接记录，所有源共用
+
 
 def load_history():
     """加载已推送的文章链接"""
@@ -14,16 +26,16 @@ def load_history():
             return set(line.strip() for line in f)
     return set()
 
+
 def save_history(links):
-    """保存已推送的文章链接（按列表顺序保存，保持顺序）"""
+    """保存已推送的文章链接"""
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-        if isinstance(links, set):
-            # 如果是 set，转换为 list（但顺序不可控）
-            links = list(links)
         for link in links:
             f.write(link + '\n')
 
+
 def send_wechat_message(text):
+    """推送 Markdown 消息到企业微信群"""
     data = {
         "msgtype": "markdown",
         "markdown": {"content": text}
@@ -31,45 +43,63 @@ def send_wechat_message(text):
     headers = {"Content-Type": "application/json"}
     requests.post(WEBHOOK_URL, data=json.dumps(data), headers=headers)
 
-def main():
-    feed = feedparser.parse(FEED_URL)
-    if not feed.entries:
-        print("未获取到RSS内容")
-        return
 
-    # 加载历史记录
+def main():
     pushed_links = load_history()
     print(f"调试信息：历史记录数量 = {len(pushed_links)}")
-    print(f"调试信息：pushed_links 是否为空 = {not pushed_links}")
-    
-    # 如果是首次运行（历史记录为空），标记所有当前文章为已读，不推送
+
+    # 收集所有源的新文章
+    all_new_entries = []  # 格式：(来源名称, entry对象)
+
+    for feed_name, feed_url in RSS_FEEDS.items():
+        try:
+            feed = feedparser.parse(feed_url)
+            if not feed.entries:
+                print(f"⚠️ {feed_name} 未获取到内容")
+                continue
+
+            # 每个源只取最新 5 篇检查
+            for entry in feed.entries[:5]:
+                if entry.link not in pushed_links:
+                    all_new_entries.append((feed_name, entry))
+        except Exception as e:
+            print(f"❌ {feed_name} 抓取失败: {e}")
+
+    # 首次运行：所有源的最新文章全部标记为已读，不推送
     if not pushed_links:
-        print("首次运行，初始化历史记录")
-        # 按照 RSS feed 的顺序保存（从新到旧）
-        links_to_save = [entry.link for entry in feed.entries]
-        save_history(links_to_save)
-        print(f"已标记全部 {len(links_to_save)} 篇文章，下次只推送新增文章")
+        print("首次运行，初始化所有源的历史记录")
+        all_links = []
+        for feed_name, feed_url in RSS_FEEDS.items():
+            feed = feedparser.parse(feed_url)
+            all_links.extend([entry.link for entry in feed.entries])
+        save_history(all_links)
+        print(f"已标记全部 {len(all_links)} 篇文章，下次只推送新增文章")
         return
-    
-    # 筛选出未推送的文章（只看最新的5篇）
-    new_entries = [entry for entry in feed.entries[:5] if entry.link not in pushed_links]
-    
-    if not new_entries:
+
+    if not all_new_entries:
         print("没有新文章")
         return
-    
-    # 推送新文章
-    msg = "**📢 Openai 最新文章更新：**\n"
-    for entry in new_entries:
-        msg += f"> [{entry.title}]({entry.link})\n"
-    
-    # 将新文章添加到历史记录的开头（保持从新到旧的顺序）
-    new_links = [entry.link for entry in new_entries]
+
+    # 组装推送消息，按来源分组
+    msg_lines = ["**📢 运维资讯更新：**\n"]
+    current_source = None
+
+    for feed_name, entry in all_new_entries:
+        if feed_name != current_source:
+            msg_lines.append(f"\n**🔹 {feed_name}**")
+            current_source = feed_name
+        msg_lines.append(f"> [{entry.title}]({entry.link})")
+
+    msg = "\n".join(msg_lines)
+
+    # 更新历史记录：新链接放前面
+    new_links = [entry.link for _, entry in all_new_entries]
     all_links = new_links + [link for link in pushed_links if link not in new_links]
-    
+
     send_wechat_message(msg)
     save_history(all_links)
-    print(f"推送完成！共推送 {len(new_entries)} 篇新文章")
+    print(f"推送完成！共推送 {len(all_new_entries)} 篇新文章")
+
 
 if __name__ == "__main__":
     main()
