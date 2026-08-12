@@ -13,6 +13,9 @@ RSS_FEEDS = {
     "开源中国": "https://www.oschina.net/news/rss",
     "DevOps.com": "https://devops.com/feed/",
     "阿里云公告": "https://www.aliyun.com/rss/notice/zh.xml",
+    "Grafana官方": "https://grafana.com/blog/index.xml",
+    "Prometheus官方": "https://prometheus.io/blog/feed.xml",
+    "Kubernetes官方": "https://kubernetes.io/feed.xml",
     "OpenAI博客": "https://openai.com/blog/rss.xml"
 }
 
